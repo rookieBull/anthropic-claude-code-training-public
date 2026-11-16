@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { Payment } from "@/data/types"
-import { EXPORT_COLUMNS, exportFilename, toCsv } from "./csv"
+import {
+  DEFAULT_EXPORT_COLUMNS,
+  EXPORT_COLUMNS,
+  exportFilename,
+  parseExportColumns,
+  parseExportScope,
+  toCsv,
+} from "./csv"
 
 /**
  * The export is the file ops hands to a merchant, so a broken cell is a
@@ -81,5 +88,75 @@ describe("exportFilename", () => {
     expect(exportFilename(new Date("2026-03-14T23:00:00.000Z"))).toBe(
       "payments-2026-03-14.csv",
     )
+  })
+
+  it("puts the scope label between the prefix and the date", () => {
+    const date = new Date("2026-03-14T23:00:00.000Z")
+    expect(exportFilename(date, "disputed")).toBe("payments-disputed-2026-03-14.csv")
+    expect(exportFilename(date, "all")).toBe("payments-all-2026-03-14.csv")
+  })
+})
+
+/**
+ * Column names arrive from the client. The parser is the allowlist: nothing
+ * it rejects reaches the serializer, and nothing it accepts is unknown.
+ */
+describe("parseExportColumns", () => {
+  it("accepts a subset of columns in the requested order", () => {
+    const parsed = parseExportColumns("amount,id")
+    expect(parsed).toEqual({ ok: true, value: ["amount", "id"] })
+    if (!parsed.ok) return
+    expect(toCsv([payment], parsed.value)).toBe(
+      ["amount,id", "$250.00,pay_0001"].join("\n"),
+    )
+  })
+
+  it("excludes the card last four by default", () => {
+    const parsed = parseExportColumns(null)
+    expect(parsed).toEqual({ ok: true, value: DEFAULT_EXPORT_COLUMNS })
+    if (!parsed.ok) return
+    expect(parsed.value).not.toContain("last4")
+    expect(parsed.value).toEqual(EXPORT_COLUMNS.filter((c) => c !== "last4"))
+  })
+
+  it("includes the card last four only when asked for", () => {
+    expect(parseExportColumns("id,last4")).toEqual({
+      ok: true,
+      value: ["id", "last4"],
+    })
+  })
+
+  it("rejects an empty selection rather than producing an empty file", () => {
+    expect(parseExportColumns("")).toMatchObject({ ok: false })
+    expect(parseExportColumns(" , ,")).toMatchObject({ ok: false })
+  })
+
+  it("rejects a column that is not on the allowlist, naming it", () => {
+    const parsed = parseExportColumns("id,drop_table")
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.message).toContain("drop_table")
+  })
+
+  it("drops repeats and keeps the first occurrence's position", () => {
+    expect(parseExportColumns("status, id ,status,id")).toEqual({
+      ok: true,
+      value: ["status", "id"],
+    })
+  })
+})
+
+describe("parseExportScope", () => {
+  it("defaults to the current filter", () => {
+    expect(parseExportScope(null)).toEqual({ ok: true, value: "filter" })
+    expect(parseExportScope("filter")).toEqual({ ok: true, value: "filter" })
+  })
+
+  it("accepts all", () => {
+    expect(parseExportScope("all")).toEqual({ ok: true, value: "all" })
+  })
+
+  it("rejects anything else", () => {
+    expect(parseExportScope("yesterday")).toMatchObject({ ok: false })
   })
 })
